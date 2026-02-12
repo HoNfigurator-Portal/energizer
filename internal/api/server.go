@@ -4,9 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io/fs"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 
+	"github.com/energizer-project/energizer/dashboard"
 	"github.com/energizer-project/energizer/internal/config"
 	"github.com/energizer-project/energizer/internal/connector"
 	"github.com/energizer-project/energizer/internal/db"
@@ -223,71 +223,63 @@ func (s *Server) buildRouter() *gin.Engine {
 		configure.DELETE("/users/:discord_id/roles/:role", s.handleRemoveRole)
 	}
 
-	// ---- Dashboard (SPA static files) ----
-	// Serve the built dashboard from dashboard/dist/ if it exists.
-	// This means running energizer.exe alone serves both API and UI on one port.
-	dashboardDir := findDashboardDir()
-	if dashboardDir != "" {
-		log.Info().Str("path", dashboardDir).Msg("serving dashboard UI")
-
-		// Serve static assets (JS, CSS, images, etc.)
-		router.Static("/assets", filepath.Join(dashboardDir, "assets"))
-		router.Static("/bg", filepath.Join(dashboardDir, "bg"))
-		router.Static("/icon", filepath.Join(dashboardDir, "icon"))
-		router.Static("/logo", filepath.Join(dashboardDir, "logo"))
-
-		// Serve other static files at root (favicon, etc.)
-		router.StaticFile("/vite.svg", filepath.Join(dashboardDir, "vite.svg"))
-
-		// SPA fallback: any route that is NOT /api/* and NOT a static file
-		// gets served index.html so client-side routing works.
-		indexHTML := filepath.Join(dashboardDir, "index.html")
-		router.NoRoute(func(c *gin.Context) {
-			// Don't intercept API routes -- let them 404 normally
-			if strings.HasPrefix(c.Request.URL.Path, "/api/") {
-				c.JSON(http.StatusNotFound, gin.H{"error": "endpoint not found"})
-				return
-			}
-			c.File(indexHTML)
-		})
-	} else {
-		log.Warn().Msg("dashboard/dist not found — dashboard UI will not be available. Run 'npm run build' in the dashboard/ directory.")
+	// ---- Dashboard (SPA static files, embedded in binary) ----
+	// The dashboard is compiled into the binary via go:embed in dashboard/embed.go.
+	// This means energizer.exe is fully self-contained — no external dashboard files needed.
+	distFS, err := fs.Sub(dashboard.DistFS, "dist")
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to access embedded dashboard — UI will not be available")
 		router.NoRoute(func(c *gin.Context) {
 			if strings.HasPrefix(c.Request.URL.Path, "/api/") {
 				c.JSON(http.StatusNotFound, gin.H{"error": "endpoint not found"})
 				return
 			}
 			c.JSON(http.StatusOK, gin.H{
-				"message": "Energizer API is running. Dashboard not built yet — run 'npm run build' in the dashboard/ directory.",
+				"message": "Energizer API is running. Dashboard not available.",
 			})
 		})
+		return router
 	}
+
+	// Check if index.html exists in the embedded FS
+	if _, err := fs.Stat(distFS, "index.html"); err != nil {
+		log.Warn().Msg("embedded dashboard has no index.html — UI will not be available")
+		router.NoRoute(func(c *gin.Context) {
+			if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+				c.JSON(http.StatusNotFound, gin.H{"error": "endpoint not found"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"message": "Energizer API is running. Dashboard not built — run 'npm run build' in the dashboard/ directory before building the Go binary.",
+			})
+		})
+		return router
+	}
+
+	log.Info().Msg("serving embedded dashboard UI")
+
+	// Read index.html once for SPA fallback
+	indexHTML, _ := fs.ReadFile(distFS, "index.html")
+
+	// Serve all embedded static files under their original paths
+	fileServer := http.FileServer(http.FS(distFS))
+	router.GET("/assets/*filepath", gin.WrapH(fileServer))
+	router.GET("/bg/*filepath", gin.WrapH(fileServer))
+	router.GET("/icon/*filepath", gin.WrapH(fileServer))
+	router.GET("/logo/*filepath", gin.WrapH(fileServer))
+
+	// SPA fallback: any route that is NOT /api/* serves index.html
+	// so client-side routing works.
+	router.NoRoute(func(c *gin.Context) {
+		// Don't intercept API routes — let them 404 normally
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "endpoint not found"})
+			return
+		}
+		c.Data(http.StatusOK, "text/html; charset=utf-8", indexHTML)
+	})
 
 	return router
-}
-
-// findDashboardDir locates the built dashboard directory.
-// It checks relative to the executable and the working directory.
-func findDashboardDir() string {
-	candidates := []string{}
-
-	// Relative to the working directory
-	candidates = append(candidates, filepath.Join("dashboard", "dist"))
-
-	// Relative to the executable
-	if exePath, err := os.Executable(); err == nil {
-		exeDir := filepath.Dir(exePath)
-		candidates = append(candidates, filepath.Join(exeDir, "dashboard", "dist"))
-	}
-
-	for _, dir := range candidates {
-		indexPath := filepath.Join(dir, "index.html")
-		if _, err := os.Stat(indexPath); err == nil {
-			absDir, _ := filepath.Abs(dir)
-			return absDir
-		}
-	}
-	return ""
 }
 
 // Stop gracefully stops the API server.

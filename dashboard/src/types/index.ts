@@ -50,6 +50,8 @@ export interface ServerInfo {
   cpu_cores: number;
   total_memory_mb: number;
   public_ip: string;
+  servers_per_core: number;
+  max_instances: number;
 }
 
 export interface CPUUsage {

@@ -4,10 +4,10 @@ import { Header } from '@/components/layout/Header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { configActions } from '@/api/endpoints';
+import { configActions, fetchServerInfo } from '@/api/endpoints';
 import { api } from '@/api/client';
 import {
-  Save, Check, AlertTriangle,
+  Save, Check, AlertTriangle, Info,
   Server, Network, Shield, FolderOpen,
   BookOpen, Trash2, MessageCircle, Lock,
 } from 'lucide-react';
@@ -150,6 +150,9 @@ export function Config() {
   const { data: configData } = useSWR('config', fetchConfig(), {
     revalidateOnFocus: false,
   });
+  const { data: serverInfo } = useSWR('serverInfo', fetchServerInfo, {
+    revalidateOnFocus: false,
+  });
 
   useEffect(() => {
     if (configData) {
@@ -233,49 +236,85 @@ export function Config() {
         {/* HoN Tab */}
         {tab === 'hon' && (
           <div className="space-y-4 stagger-children">
-            {honSections.map((section) => (
-              <Card key={section.title} className="animate-fade-in">
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center gap-2 text-muted-foreground">
-                    {section.icon}
-                    {section.title}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {section.fields.map((field) => (
-                      <div key={field.key} className="space-y-1">
-                        <label className="text-[11px] font-medium text-muted-foreground">
-                          {field.label}
-                        </label>
-                        {field.type === 'boolean' ? (
-                          <div className="flex items-center gap-2 h-9">
-                            <Toggle
-                              checked={Boolean(honData[field.key])}
-                              onChange={(v) => updateHonField(field.key, v)}
-                              label={field.label}
-                            />
-                          </div>
-                        ) : (
-                          <Input
-                            type={field.type}
-                            value={(honData[field.key] as string | number) ?? ''}
-                            onChange={(e) =>
-                              updateHonField(
-                                field.key,
-                                field.type === 'number'
-                                  ? Number(e.target.value)
-                                  : e.target.value
-                              )
-                            }
-                          />
+            {honSections.map((section) => {
+              // Calculate max instances for the Capacity section
+              const cpuCores = serverInfo?.cpu_cores ?? 0;
+              const perCore = Number(honData.svr_total_per_core) || 1;
+              const maxInstances = cpuCores * perCore;
+              const currentTotal = Number(honData.svr_total) || 0;
+              const isOverCapacity = currentTotal > maxInstances && maxInstances > 0;
+
+              return (
+                <Card key={section.title} className="animate-fade-in">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-muted-foreground">
+                      {section.icon}
+                      {section.title}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {/* Capacity info banner */}
+                    {section.title === 'Capacity' && cpuCores > 0 && (
+                      <div
+                        className={cn(
+                          'mb-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs',
+                          isOverCapacity
+                            ? 'border-warning/30 bg-warning/5 text-warning'
+                            : 'border-primary/20 bg-primary/5 text-primary'
                         )}
+                      >
+                        {isOverCapacity ? (
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                        ) : (
+                          <Info className="h-3.5 w-3.5 shrink-0" />
+                        )}
+                        <span>
+                          <strong>{cpuCores}</strong> CPU cores × <strong>{perCore}</strong> per core
+                          = <strong>max {maxInstances}</strong> instances
+                          {isOverCapacity && (
+                            <span className="ml-1 font-medium">
+                              (current {currentTotal} exceeds max)
+                            </span>
+                          )}
+                        </span>
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                    )}
+
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {section.fields.map((field) => (
+                        <div key={field.key} className="space-y-1">
+                          <label className="text-[11px] font-medium text-muted-foreground">
+                            {field.label}
+                          </label>
+                          {field.type === 'boolean' ? (
+                            <div className="flex items-center gap-2 h-9">
+                              <Toggle
+                                checked={Boolean(honData[field.key])}
+                                onChange={(v) => updateHonField(field.key, v)}
+                                label={field.label}
+                              />
+                            </div>
+                          ) : (
+                            <Input
+                              type={field.type}
+                              value={(honData[field.key] as string | number) ?? ''}
+                              onChange={(e) =>
+                                updateHonField(
+                                  field.key,
+                                  field.type === 'number'
+                                    ? Number(e.target.value)
+                                    : e.target.value
+                                )
+                              }
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         )}
 

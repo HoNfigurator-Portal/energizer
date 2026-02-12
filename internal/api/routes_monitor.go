@@ -23,12 +23,24 @@ func (s *Server) handleGetInstancesStatus(c *gin.Context) {
 	})
 }
 
-// handleGetTotalServers returns the total server count.
+// handleGetTotalServers returns the total server count and capacity info.
 func (s *Server) handleGetTotalServers(c *gin.Context) {
+	honData := s.cfg.GetHoNData()
+	sysInfo := util.GetSystemInfo()
+
+	perCore := honData.ServersPerCore
+	if perCore < 1 {
+		perCore = 1
+	}
+	maxInstances := sysInfo.CPUCores * perCore
+
 	c.JSON(http.StatusOK, gin.H{
-		"total":    s.manager.GetTotalServers(),
-		"running":  s.manager.GetRunningCount(),
-		"occupied": s.manager.GetOccupiedCount(),
+		"total":            s.manager.GetTotalServers(),
+		"running":          s.manager.GetRunningCount(),
+		"occupied":         s.manager.GetOccupiedCount(),
+		"cpu_cores":        sysInfo.CPUCores,
+		"servers_per_core": perCore,
+		"max_instances":    maxInstances,
 	})
 }
 

@@ -62,7 +62,11 @@ export function Overview() {
           <SystemStatCard
             title="Servers"
             value={`${running} / ${total}`}
-            subtitle={occupied > 0 ? `${occupied} in game` : 'All idle'}
+            subtitle={
+              serverInfo?.max_instances
+                ? `Max ${serverInfo.max_instances} (${serverInfo.cpu_cores} cores × ${serverInfo.servers_per_core}/core)${occupied > 0 ? ` · ${occupied} in game` : ''}`
+                : occupied > 0 ? `${occupied} in game` : 'All idle'
+            }
             icon={<Server className="h-4 w-4" />}
             color={running === total && total > 0 ? 'success' : running === 0 && total > 0 ? 'destructive' : 'default'}
           />

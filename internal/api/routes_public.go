@@ -23,18 +23,26 @@ func (s *Server) handleGetServerInfo(c *gin.Context) {
 	honData := s.cfg.GetHoNData()
 	sysInfo := util.GetSystemInfo()
 
+	perCore := honData.ServersPerCore
+	if perCore < 1 {
+		perCore = 1
+	}
+	maxInstances := sysInfo.CPUCores * perCore
+
 	c.JSON(http.StatusOK, gin.H{
-		"server_name":     honData.Name,
-		"server_location": honData.Location,
-		"server_region":   honData.Region,
-		"total_servers":   s.manager.GetTotalServers(),
-		"running_servers": s.manager.GetRunningCount(),
+		"server_name":      honData.Name,
+		"server_location":  honData.Location,
+		"server_region":    honData.Region,
+		"total_servers":    s.manager.GetTotalServers(),
+		"running_servers":  s.manager.GetRunningCount(),
 		"occupied_servers": s.manager.GetOccupiedCount(),
-		"platform":        sysInfo.Platform,
-		"cpu_model":       sysInfo.CPUModel,
-		"cpu_cores":       sysInfo.CPUCores,
-		"total_memory_mb": sysInfo.TotalMemory,
-		"public_ip":       s.manager.GetPublicIP(),
+		"platform":         sysInfo.Platform,
+		"cpu_model":        sysInfo.CPUModel,
+		"cpu_cores":        sysInfo.CPUCores,
+		"total_memory_mb":  sysInfo.TotalMemory,
+		"public_ip":        s.manager.GetPublicIP(),
+		"servers_per_core": perCore,
+		"max_instances":    maxInstances,
 	})
 }
 
