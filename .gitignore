@@ -1,0 +1,42 @@
+# Build output
+build/
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go
+vendor/
+go.sum
+
+# Config and data (sensitive)
+config/config.json
+config/*.pem
+config/*.key
+config/*.crt
+config/roles.db
+config/roles.db-shm
+config/roles.db-wal
+config/roles.db-journal
+config/*.pid
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Replays and temp files
+*.honreplay
+*.tmp
+*.clog
+*.stats
