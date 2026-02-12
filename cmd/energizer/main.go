@@ -10,7 +10,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -119,29 +121,80 @@ func main() {
 
 	// Auto-detect server IP if not configured.
 	// The game server uses svr_ip to register itself with the master server.
-	// Without a valid IP, the server will not appear in the game client list.
+	// Without a valid PUBLIC IP, the server will not appear in the game client list.
+	// On a machine behind NAT or a different server, local detection often yields
+	// a private IP — we then fetch the public IP from an external service.
 	honData := cfg.GetHoNData()
 	if honData.IP == "" {
 		masterAddr := honData.MasterServerURL
-		// If the master server resolves to a private/local IP, use a public
-		// DNS server as the dial target instead — connecting to yourself
-		// won't reveal your external IP.
 		if isLocalAddress(masterAddr) {
-			masterAddr = "8.8.8.8" // fallback: use Google DNS as a routable target
+			masterAddr = "8.8.8.8"
 		}
 		detectedIP := detectServerIP(masterAddr)
-		if detectedIP != "" {
+		if detectedIP != "" && !isPrivateIP(detectedIP) {
 			log.Info().Str("svr_ip", detectedIP).Msg("auto-detected server IP (svr_ip was empty)")
 			honData.IP = detectedIP
 			cfg.SetHoNData(honData)
 			if err := cfg.Save(); err != nil {
 				log.Warn().Err(err).Msg("failed to save auto-detected IP to config")
 			}
+		} else if detectedIP != "" && isPrivateIP(detectedIP) {
+			// Local IP is private (e.g. 192.168.x, 10.x) — clients on the internet
+			// cannot use it. Fetch public IP so the server appears in the game list.
+			publicIP := detectPublicIP()
+			if publicIP != "" {
+				log.Info().
+					Str("local_ip", detectedIP).
+					Str("svr_ip", publicIP).
+					Msg("using public IP (local IP is private); game servers will register with this")
+				honData.IP = publicIP
+				cfg.SetHoNData(honData)
+				if err := cfg.Save(); err != nil {
+					log.Warn().Err(err).Msg("failed to save auto-detected IP to config")
+				}
+			} else {
+				log.Warn().
+					Str("local_ip", detectedIP).
+					Msg("svr_ip empty and public IP detection failed — set svr_ip in config to this machine's public IP so the server appears in-game")
+				honData.IP = detectedIP // still set local so something is there
+				cfg.SetHoNData(honData)
+			}
 		} else {
-			log.Warn().Msg("svr_ip is empty and auto-detection failed — game servers may not be visible to clients")
+			publicIP := detectPublicIP()
+			if publicIP != "" {
+				log.Info().Str("svr_ip", publicIP).Msg("auto-detected public IP (svr_ip was empty)")
+				honData.IP = publicIP
+				cfg.SetHoNData(honData)
+				if err := cfg.Save(); err != nil {
+					log.Warn().Err(err).Msg("failed to save auto-detected IP to config")
+				}
+			} else {
+				log.Warn().Msg("svr_ip is empty and auto-detection failed — set svr_ip in config to this machine's public IP so the server appears in-game")
+			}
 		}
 	} else {
-		log.Info().Str("svr_ip", honData.IP).Msg("using configured server IP")
+		// If config has a private IP (e.g. copied from another machine), try to
+		// replace with public IP so the server is visible when run elsewhere.
+		if isPrivateIP(honData.IP) {
+			publicIP := detectPublicIP()
+			if publicIP != "" {
+				log.Info().
+					Str("configured_ip", honData.IP).
+					Str("svr_ip", publicIP).
+					Msg("configured IP is private; using detected public IP so the server appears in-game")
+				honData.IP = publicIP
+				cfg.SetHoNData(honData)
+				if err := cfg.Save(); err != nil {
+					log.Warn().Err(err).Msg("failed to save auto-detected IP to config")
+				}
+			} else {
+				log.Warn().
+					Str("svr_ip", honData.IP).
+					Msg("svr_ip is a private IP — game clients may not see this server. Set svr_ip to this machine's public IP in config.")
+			}
+		} else {
+			log.Info().Str("svr_ip", honData.IP).Msg("using configured server IP")
+		}
 	}
 
 	// Cleanup leftover game server processes from a previous run
@@ -469,6 +522,64 @@ func detectServerIP(masterServerURL string) string {
 	}
 
 	return ip
+}
+
+// isPrivateIP returns true if ip is an RFC1918 private address (10.x, 172.16-31.x, 192.168.x).
+func isPrivateIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return true
+	}
+	privateRanges := []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+	for _, cidr := range privateRanges {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network != nil && network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// detectPublicIP fetches the machine's public (external) IP from a simple HTTP API.
+// Used when the server is behind NAT so the game list shows a reachable address.
+func detectPublicIP() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	// Prefer IPv4; use a service that returns plain text IP
+	urls := []string{
+		"https://api.ipify.org",
+		"https://ifconfig.me/ip",
+		"https://icanhazip.com",
+	}
+	for _, u := range urls {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+		if err != nil {
+			log.Debug().Err(err).Str("url", u).Msg("public IP fetch failed")
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			continue
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+		ipStr := strings.TrimSpace(string(body))
+		if ip := net.ParseIP(ipStr); ip != nil && ip.To4() != nil {
+			return ipStr
+		}
+	}
+	return ""
 }
 
 // isLocalAddress returns true if the given host (host:port or just host)

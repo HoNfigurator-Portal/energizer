@@ -5,9 +5,10 @@ import { Header } from '@/components/layout/Header';
 import { ServerStatusBadge } from '@/components/ServerStatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { fetchInstances, serverActions } from '@/api/endpoints';
+import { Input } from '@/components/ui/input';
+import { fetchInstances, serverActions, configActions } from '@/api/endpoints';
 import {
-  Play, Square, RotateCcw, Power, PowerOff, Server, MonitorX,
+  Play, Square, RotateCcw, Power, PowerOff, Server, MonitorX, Plus, Trash2,
 } from 'lucide-react';
 import { num } from '@/lib/utils';
 import { normalizePhase } from '@/components/ServerStatusBadge';
@@ -15,10 +16,15 @@ import { toast } from '@/lib/toast';
 import type { InstanceInfo } from '@/types';
 
 const POLL_INTERVAL = 5000;
+const MAX_ADD = 20;
 
 export function Servers() {
   const { data, mutate } = useSWR('instances', fetchInstances, { refreshInterval: POLL_INTERVAL });
   const [loading, setLoading] = useState<Record<string, boolean>>({});
+  const [addCount, setAddCount] = useState(1);
+  const [addLoading, setAddLoading] = useState(false);
+  const [removeLoading, setRemoveLoading] = useState<number | null>(null);
+  const [removeAllLoading, setRemoveAllLoading] = useState(false);
   const navigate = useNavigate();
 
   const instances = data?.instances ?? [];
@@ -41,11 +47,105 @@ export function Servers() {
     }
   }
 
+  async function handleAddServers() {
+    const count = Math.min(MAX_ADD, Math.max(1, addCount));
+    setAddLoading(true);
+    try {
+      await configActions.addServers(count);
+      toast.success(`Added ${count} server(s)`);
+      setAddCount(1);
+      setTimeout(() => mutate(), 2000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Add servers failed';
+      toast.error(msg);
+    } finally {
+      setAddLoading(false);
+    }
+  }
+
+  async function handleRemoveServer(port: number, serverName: string) {
+    if (!confirm(`Remove server "${serverName}" (port ${port})? It will be stopped and removed from the pool.`)) return;
+    setRemoveLoading(port);
+    try {
+      await configActions.removeServers([port]);
+      toast.success(`Server :${port} removed`);
+      setTimeout(() => mutate(), 500);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Remove failed';
+      toast.error(msg);
+    } finally {
+      setRemoveLoading(null);
+    }
+  }
+
+  async function handleRemoveAll() {
+    if (instances.length === 0) return;
+    if (!confirm(`Remove ALL ${instances.length} server instances? They will be stopped and removed from the pool.`)) return;
+    setRemoveAllLoading(true);
+    try {
+      const allPorts = instances.map((i: InstanceInfo) => i.port);
+      await configActions.removeServers(allPorts);
+      toast.success(`All ${allPorts.length} instances removed`);
+      setTimeout(() => mutate(), 500);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Remove All failed';
+      toast.error(msg);
+    } finally {
+      setRemoveAllLoading(false);
+    }
+  }
+
   return (
     <div className="flex flex-col">
-      <Header title="Servers" subtitle={`${instances.length} instances configured`} />
+      <Header
+        title="Servers"
+        subtitle={`${instances.length} instances configured`}
+        actions={
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleRemoveAll}
+            disabled={removeAllLoading || instances.length === 0}
+            className="gap-1.5 text-destructive hover:text-destructive"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            {removeAllLoading ? 'Removing…' : 'Remove All'}
+          </Button>
+        }
+      />
 
-      <div className="p-5">
+      <div className="p-5 space-y-4">
+        {/* Add servers */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center justify-between text-sm font-medium text-muted-foreground">
+              <span className="flex items-center gap-2">
+                <Plus className="h-3.5 w-3.5" />
+                Add Game Server Instances
+              </span>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={MAX_ADD}
+                  value={addCount}
+                  onChange={(e) => setAddCount(Math.min(MAX_ADD, Math.max(1, Number(e.target.value) || 1)))}
+                  className="w-16 h-8 text-xs text-center"
+                />
+                <Button
+                  size="sm"
+                  onClick={handleAddServers}
+                  disabled={addLoading}
+                  className="gap-1.5"
+                >
+                  <Plus className="h-3 w-3" />
+                  {addLoading ? 'Adding…' : 'Add'}
+                </Button>
+              </div>
+            </CardTitle>
+          </CardHeader>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -72,7 +172,8 @@ export function Servers() {
                       <th className="px-3 pb-2.5 text-left font-medium text-muted-foreground uppercase tracking-wider text-[10px]">Uptime</th>
                       <th className="px-3 pb-2.5 text-left font-medium text-muted-foreground uppercase tracking-wider text-[10px]">CPU</th>
                       <th className="px-3 pb-2.5 text-left font-medium text-muted-foreground uppercase tracking-wider text-[10px]">PID</th>
-                      <th className="px-5 pb-2.5 text-right font-medium text-muted-foreground uppercase tracking-wider text-[10px]">Actions</th>
+                      <th className="px-3 pb-2.5 text-right font-medium text-muted-foreground uppercase tracking-wider text-[10px]">Actions</th>
+                      <th className="px-5 pb-2.5 text-right font-medium text-muted-foreground uppercase tracking-wider text-[10px] w-12">Remove</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -177,6 +278,18 @@ export function Servers() {
                                 </Button>
                               )}
                             </div>
+                          </td>
+                          <td className="px-5 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Remove instance"
+                              disabled={removeLoading === inst.port}
+                              onClick={() => handleRemoveServer(inst.port, inst.server_name || `Server ${inst.id}`)}
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
                           </td>
                         </tr>
                       );

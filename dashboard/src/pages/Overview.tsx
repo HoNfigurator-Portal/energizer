@@ -1,23 +1,29 @@
+import { useState } from 'react';
 import useSWR from 'swr';
 import { Header } from '@/components/layout/Header';
 import { SystemStatCard } from '@/components/SystemStatCard';
 import { ServerStatusBadge } from '@/components/ServerStatusBadge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { fetchInstances, fetchCPU, fetchMemory, fetchServerInfo } from '@/api/endpoints';
-import { Cpu, MemoryStick, Server, Globe, Activity, MonitorX } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { fetchInstances, fetchCPU, fetchMemory, fetchServerInfo, serverActions } from '@/api/endpoints';
+import { Cpu, MemoryStick, Server, Globe, Activity, MonitorX, Play, Square, RotateCcw } from 'lucide-react';
 import { formatBytes, num } from '@/lib/utils';
 import { normalizePhase } from '@/components/ServerStatusBadge';
+import { toast } from '@/lib/toast';
 import { useNavigate } from 'react-router-dom';
 import type { InstanceInfo } from '@/types';
 
 const POLL_INTERVAL = 5000;
 
 export function Overview() {
-  const { data: instancesData } = useSWR('instances', fetchInstances, { refreshInterval: POLL_INTERVAL });
+  const { data: instancesData, mutate } = useSWR('instances', fetchInstances, { refreshInterval: POLL_INTERVAL });
   const { data: cpuData } = useSWR('cpu', fetchCPU, { refreshInterval: POLL_INTERVAL });
   const { data: memData } = useSWR('memory', fetchMemory, { refreshInterval: POLL_INTERVAL });
   const { data: serverInfo } = useSWR('serverInfo', fetchServerInfo, { refreshInterval: 30000 });
   const navigate = useNavigate();
+  const [startAllLoading, setStartAllLoading] = useState(false);
+  const [stopAllLoading, setStopAllLoading] = useState(false);
+  const [restartAllLoading, setRestartAllLoading] = useState(false);
 
   const instances = instancesData?.instances ?? [];
   const running = instances.filter((i: InstanceInfo) => i.running).length;
@@ -30,11 +36,90 @@ export function Overview() {
   const cpuPct = num(cpuData?.cpu_percent);
   const memPct = num(memData?.used_percent);
 
+  async function handleStartAll() {
+    if (startAllLoading || total === 0) return;
+    setStartAllLoading(true);
+    try {
+      await serverActions.startAll();
+      toast.success('Start All — servers are starting');
+      setTimeout(() => mutate(), 2000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Start All failed';
+      toast.error(msg);
+    } finally {
+      setStartAllLoading(false);
+    }
+  }
+
+  async function handleStopAll() {
+    if (stopAllLoading || total === 0) return;
+    setStopAllLoading(true);
+    try {
+      await serverActions.stopAll();
+      toast.success('Stop All — servers are stopping');
+      setTimeout(() => mutate(), 1000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Stop All failed';
+      toast.error(msg);
+    } finally {
+      setStopAllLoading(false);
+    }
+  }
+
+  async function handleRestartAll() {
+    if (restartAllLoading || total === 0) return;
+    setRestartAllLoading(true);
+    try {
+      await serverActions.restartAll();
+      toast.success('Restart All — servers are restarting');
+      setTimeout(() => mutate(), 3000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Restart All failed';
+      toast.error(msg);
+    } finally {
+      setRestartAllLoading(false);
+    }
+  }
+
   return (
     <div className="flex flex-col">
       <Header
         title="Overview"
         subtitle={serverInfo?.server_name || 'Energizer Server Manager'}
+        actions={
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="default"
+              onClick={handleStartAll}
+              disabled={startAllLoading || total === 0 || running === total}
+              className="gap-1.5"
+            >
+              <Play className="h-3.5 w-3.5" />
+              {startAllLoading ? 'Starting…' : 'Start All'}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleStopAll}
+              disabled={stopAllLoading || total === 0 || running === 0}
+              className="gap-1.5"
+            >
+              <Square className="h-3.5 w-3.5" />
+              {stopAllLoading ? 'Stopping…' : 'Stop All'}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleRestartAll}
+              disabled={restartAllLoading || total === 0 || running === 0}
+              className="gap-1.5"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              {restartAllLoading ? 'Restarting…' : 'Restart All'}
+            </Button>
+          </div>
+        }
       />
 
       <div className="space-y-5 p-5">

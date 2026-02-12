@@ -188,6 +188,47 @@ func (s *Server) handleMessageServer(c *gin.Context) {
 	})
 }
 
+// handleStartAll starts all configured game server instances (one-click).
+func (s *Server) handleStartAll(c *gin.Context) {
+	// Use background context — servers must outlive the HTTP request.
+	if err := s.manager.StartAll(context.Background()); err != nil {
+		log.Warn().Err(err).Msg("API: start all had failures")
+		c.JSON(http.StatusOK, gin.H{
+			"status": "started_with_errors",
+			"error":  err.Error(),
+		})
+		return
+	}
+	username, _ := c.Get("discord_username")
+	log.Info().Interface("user", username).Msg("API: start all servers")
+	c.JSON(http.StatusOK, gin.H{"status": "started"})
+}
+
+// handleStopAll stops all running game server instances (one-click).
+func (s *Server) handleStopAll(c *gin.Context) {
+	s.manager.StopAll()
+	username, _ := c.Get("discord_username")
+	log.Info().Interface("user", username).Msg("API: stop all servers")
+	c.JSON(http.StatusOK, gin.H{"status": "stopped"})
+}
+
+// handleRestartAll stops all game servers then starts them again (one-click).
+func (s *Server) handleRestartAll(c *gin.Context) {
+	s.manager.StopAll()
+	// Use background context — servers must outlive the HTTP request.
+	if err := s.manager.StartAll(context.Background()); err != nil {
+		log.Warn().Err(err).Msg("API: restart all had failures")
+		c.JSON(http.StatusOK, gin.H{
+			"status": "restarted_with_errors",
+			"error":  err.Error(),
+		})
+		return
+	}
+	username, _ := c.Get("discord_username")
+	log.Info().Interface("user", username).Msg("API: restart all servers")
+	c.JSON(http.StatusOK, gin.H{"status": "restarted"})
+}
+
 // parsePort extracts and validates the port parameter from the URL.
 func parsePort(c *gin.Context) (uint64, error) {
 	portStr := c.Param("port")

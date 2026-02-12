@@ -46,6 +46,9 @@ export const serverActions = {
   disable: (port: number) => api.post(`/api/control/disable_server/${port}`),
   message: (port: number, message: string) =>
     api.post(`/api/control/message_server/${port}`, { message }),
+  startAll: () => api.post('/api/control/start_all'),
+  stopAll: () => api.post('/api/control/stop_all'),
+  restartAll: () => api.post('/api/control/restart_all'),
 };
 
 // ---- Configuration ----

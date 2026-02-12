@@ -585,6 +585,13 @@ func (m *Manager) AddServers(ctx context.Context, count int) error {
 		}(inst)
 	}
 
+	// Persist new total to config so it survives restart
+	honData.TotalServers = len(m.servers)
+	m.cfg.SetHoNData(honData)
+	if err := m.cfg.Save(); err != nil {
+		log.Warn().Err(err).Msg("failed to save config after adding servers")
+	}
+
 	log.Info().Int("count", count).Msg("added new servers")
 	return nil
 }
@@ -600,6 +607,14 @@ func (m *Manager) RemoveServers(ports []uint16) error {
 			delete(m.servers, port)
 			log.Info().Uint16("port", port).Msg("server removed from pool")
 		}
+	}
+
+	// Persist new total to config so it survives restart
+	honData := m.cfg.GetHoNData()
+	honData.TotalServers = len(m.servers)
+	m.cfg.SetHoNData(honData)
+	if err := m.cfg.Save(); err != nil {
+		log.Warn().Err(err).Msg("failed to save config after removing servers")
 	}
 
 	return nil

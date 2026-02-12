@@ -198,6 +198,9 @@ func (s *Server) buildRouter() *gin.Engine {
 	{
 		control.POST("/start_server/:port", s.handleStartServer)
 		control.POST("/stop_server/:port", s.handleStopServer)
+		control.POST("/start_all", s.handleStartAll)
+		control.POST("/stop_all", s.handleStopAll)
+		control.POST("/restart_all", s.handleRestartAll)
 		control.POST("/enable_server/:port", s.handleEnableServer)
 		control.POST("/disable_server/:port", s.handleDisableServer)
 		control.POST("/restart_server/:port", s.handleRestartServer)
