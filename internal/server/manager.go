@@ -53,7 +53,7 @@ func NewManager(cfg *config.Config, eventBus *events.EventBus) (*Manager, error)
 		eventBus:       eventBus,
 		servers:        make(map[uint16]*Instance),
 		connRegistry:   network.NewConnectionRegistry(),
-		startSemaphore: make(chan struct{}, 3), // Max 3 concurrent starts
+		startSemaphore: make(chan struct{}, 5), // Max 5 concurrent starts
 		managerVersion: "1.0.0",
 	}
 
@@ -163,7 +163,7 @@ func (m *Manager) StartAll(ctx context.Context) error {
 			mu.Unlock()
 
 			// Small delay between starts to avoid overwhelming the system
-			time.Sleep(2 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 		}()
 	}
 

@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	defaultMasterServerURL = "http://api.kongor.net:55555"
+	defaultMasterServerURL = "http://api.kongor.net"
 	replayAuthPath         = "/server_requester.php"
 	patchCheckPath         = "/patcher/patcher.php"
 	userAgent              = "S2 Games/Heroes of Newerth/%s/x86_64/%s"

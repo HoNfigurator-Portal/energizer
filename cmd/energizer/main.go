@@ -192,6 +192,25 @@ func main() {
 					Str("svr_ip", honData.IP).
 					Msg("svr_ip is a private IP — game clients may not see this server. Set svr_ip to this machine's public IP in config.")
 			}
+		} else if !isOwnIP(honData.IP) {
+			// Config has a public IP that doesn't belong to this machine
+			// (e.g. config was copied from another server). Detect the correct IP.
+			publicIP := detectPublicIP()
+			if publicIP != "" {
+				log.Warn().
+					Str("configured_ip", honData.IP).
+					Str("svr_ip", publicIP).
+					Msg("configured svr_ip belongs to another machine; overriding with this machine's public IP")
+				honData.IP = publicIP
+				cfg.SetHoNData(honData)
+				if err := cfg.Save(); err != nil {
+					log.Warn().Err(err).Msg("failed to save auto-detected IP to config")
+				}
+			} else {
+				log.Warn().
+					Str("svr_ip", honData.IP).
+					Msg("svr_ip does not belong to this machine and public IP detection failed — game clients may connect to the wrong server")
+			}
 		} else {
 			log.Info().Str("svr_ip", honData.IP).Msg("using configured server IP")
 		}
@@ -522,6 +541,27 @@ func detectServerIP(masterServerURL string) string {
 	}
 
 	return ip
+}
+
+// isOwnIP returns true if ipStr is assigned to any local network interface on this machine.
+// Used to detect when config contains another machine's IP (e.g. copied config).
+func isOwnIP(ipStr string) bool {
+	target := net.ParseIP(ipStr)
+	if target == nil {
+		return false
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok {
+			if ipNet.IP.Equal(target) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isPrivateIP returns true if ip is an RFC1918 private address (10.x, 172.16-31.x, 192.168.x).
