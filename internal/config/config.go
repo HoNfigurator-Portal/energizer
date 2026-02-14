@@ -76,9 +76,10 @@ type HoNData struct {
 	OverrideAffinity bool `json:"svr_override_affinity"`
 
 	// Game settings
-	AllowBotMatches bool   `json:"svr_allow_bot_matches"`
-	MaxIdleTime     int    `json:"svr_max_idle_time"`
-	ServerVersion   string `json:"svr_version"`
+	AllowBotMatches     bool   `json:"svr_allow_bot_matches"`
+	MaxIdleTime         int    `json:"svr_max_idle_time"`
+	ServerVersion       string `json:"svr_version"`
+	MaxConcurrentStarts int    `json:"svr_max_concurrent_starts"`
 }
 
 // ApplicationData contains manager application configuration.
@@ -186,6 +187,7 @@ func DefaultConfig() *Config {
 			MaxIdleTime:               60,
 			AllowBotMatches:           false,
 			OverrideAffinity:          true,
+			MaxConcurrentStarts:       5,
 		},
 		ApplicationData: ApplicationData{
 			Timers: TimerConfig{

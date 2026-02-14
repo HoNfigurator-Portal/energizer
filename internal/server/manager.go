@@ -48,14 +48,21 @@ type Manager struct {
 
 // NewManager creates and initializes the server manager.
 func NewManager(cfg *config.Config, eventBus *events.EventBus) (*Manager, error) {
+	maxConcurrent := cfg.GetHoNData().MaxConcurrentStarts
+	if maxConcurrent <= 0 {
+		maxConcurrent = 5
+	}
+
 	mgr := &Manager{
 		cfg:            cfg,
 		eventBus:       eventBus,
 		servers:        make(map[uint16]*Instance),
 		connRegistry:   network.NewConnectionRegistry(),
-		startSemaphore: make(chan struct{}, 5), // Max 5 concurrent starts
+		startSemaphore: make(chan struct{}, maxConcurrent),
 		managerVersion: "1.0.0",
 	}
+
+	log.Info().Int("max_concurrent_starts", maxConcurrent).Msg("server startup concurrency configured")
 
 	// Subscribe to events
 	mgr.subscribeEvents()
