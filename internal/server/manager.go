@@ -130,7 +130,9 @@ func (m *Manager) initializeServers() {
 	}
 }
 
-// StartAll launches all configured game servers with controlled concurrency.
+// StartAll launches all configured game servers in batches.
+// Each batch starts up to MaxConcurrentStarts servers, then waits for them
+// to reach READY state (or timeout) before starting the next batch.
 func (m *Manager) StartAll(ctx context.Context) error {
 	m.mu.RLock()
 	servers := make([]*Instance, 0, len(m.servers))
@@ -139,57 +141,124 @@ func (m *Manager) StartAll(ctx context.Context) error {
 	}
 	m.mu.RUnlock()
 
-	log.Info().Int("count", len(servers)).Msg("starting all game servers")
+	// Sort by port for deterministic startup order
+	sort.Slice(servers, func(i, j int) bool {
+		return servers[i].Port() < servers[j].Port()
+	})
 
-	var wg sync.WaitGroup
-	var failCount int
-	var successCount int
-	var mu sync.Mutex
+	batchSize := cap(m.startSemaphore)
+	totalCount := len(servers)
 
-	for _, inst := range servers {
-		inst := inst
+	log.Info().Int("count", totalCount).Int("batch_size", batchSize).Msg("starting all game servers")
 
-		// Acquire semaphore to limit concurrent starts
-		m.startSemaphore <- struct{}{}
+	var totalSuccess, totalFail int
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer func() { <-m.startSemaphore }()
+	for batchStart := 0; batchStart < totalCount; batchStart += batchSize {
+		batchEnd := batchStart + batchSize
+		if batchEnd > totalCount {
+			batchEnd = totalCount
+		}
+		batch := servers[batchStart:batchEnd]
+		batchNum := (batchStart / batchSize) + 1
 
-			if err := inst.Start(ctx); err != nil {
-				log.Warn().Err(err).Uint16("port", inst.Port()).Msg("failed to start server")
+		log.Info().
+			Int("batch", batchNum).
+			Int("servers", len(batch)).
+			Int("from", batchStart+1).
+			Int("to", batchEnd).
+			Msg("starting batch")
+
+		// Start all servers in this batch concurrently
+		var wg sync.WaitGroup
+		var batchSuccess, batchFail int
+		var mu sync.Mutex
+
+		for _, inst := range batch {
+			inst := inst
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := inst.Start(ctx); err != nil {
+					log.Warn().Err(err).Uint16("port", inst.Port()).Msg("failed to start server")
+					mu.Lock()
+					batchFail++
+					mu.Unlock()
+					return
+				}
 				mu.Lock()
-				failCount++
+				batchSuccess++
 				mu.Unlock()
-				return
-			}
+			}()
+		}
+		wg.Wait()
 
-			mu.Lock()
-			successCount++
-			mu.Unlock()
+		totalSuccess += batchSuccess
+		totalFail += batchFail
 
-			// Small delay between starts to avoid overwhelming the system
-			time.Sleep(500 * time.Millisecond)
-		}()
+		log.Info().
+			Int("batch", batchNum).
+			Int("success", batchSuccess).
+			Int("failed", batchFail).
+			Msg("batch processes spawned")
+
+		// Wait for servers in this batch to become READY before starting next batch
+		if batchEnd < totalCount && batchSuccess > 0 {
+			m.waitForBatchReady(ctx, batch, 120*time.Second)
+		}
 	}
 
-	wg.Wait()
-
 	log.Info().
-		Int("success", successCount).
-		Int("failed", failCount).
-		Int("total", len(servers)).
+		Int("success", totalSuccess).
+		Int("failed", totalFail).
+		Int("total", totalCount).
 		Msg("game server startup complete")
 
-	if failCount > 0 && successCount == 0 {
-		return fmt.Errorf("all %d servers failed to start", failCount)
+	if totalFail > 0 && totalSuccess == 0 {
+		return fmt.Errorf("all %d servers failed to start", totalFail)
 	}
 
 	// Save PIDs to file for cleanup on restart
 	m.savePIDFile()
 
 	return nil
+}
+
+// waitForBatchReady waits until all servers in the batch reach READY state
+// or the timeout expires. This ensures a batch is fully loaded before the
+// next batch starts, preventing CPU/memory overload from too many servers
+// loading game assets simultaneously.
+func (m *Manager) waitForBatchReady(ctx context.Context, batch []*Instance, timeout time.Duration) {
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	log.Info().Int("count", len(batch)).Msg("waiting for batch to become ready")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-deadline:
+			log.Warn().Msg("batch ready timeout reached, proceeding with next batch")
+			return
+		case <-ticker.C:
+			readyCount := 0
+			for _, inst := range batch {
+				status := inst.State().GetStatus()
+				if status == events.GameStatusReady ||
+					status == events.GameStatusOccupied ||
+					status == events.GameStatusSleeping ||
+					status == events.GameStatusStopped {
+					readyCount++
+				}
+			}
+			if readyCount >= len(batch) {
+				log.Info().Int("ready", readyCount).Msg("all servers in batch are ready, proceeding")
+				return
+			}
+			log.Debug().Int("ready", readyCount).Int("total", len(batch)).Msg("waiting for batch servers")
+		}
+	}
 }
 
 // CleanupLeftoverServers kills game servers from a previous run using the PID file.
